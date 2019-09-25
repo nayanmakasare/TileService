@@ -47,51 +47,28 @@ func (h *TileServiceHandler) CheckInRedis(redisKey string) (bool, error) {
 
 func (h *TileServiceHandler) GetMovieTiles(ctx context.Context, req *TileService.RowId, stream TileService.TileService_GetMovieTilesStream) error {
 	log.Info("Triggered 1")
-	//h.streamMovieTiles(stream)
-	cur , err := h.MongoCollection.Find(ctx, bson.D{{}})
+	exists, err := h.CheckInRedis(req.RowId)
 	if err != nil {
-		log.Fatal("Tigger erro 1", err.Error())
 		return err
 	}
-	for cur.Next(ctx){
-		var movieTiles TileService.MovieTile
-		err := cur.Decode(&movieTiles)
-		if err != nil {
-			log.Fatal("Tigger erro 2", err.Error())
-			return err
+	if exists {
+		stringResultCmd := h.RedisConnection.SMembers(req.RowId)
+		resultStringArray := stringResultCmd.Val()
+		for i := 0 ; i < len(resultStringArray) ; i++ {
+			var resultMovie TileService.MovieTile
+			err := proto.Unmarshal([]byte(resultStringArray[i]), &resultMovie)
+			if err != nil {
+				return err
+			}
+			err = stream.Send(&resultMovie)
+			if err != nil {
+				return err
+			}
 		}
-		err = stream.Send(&movieTiles)
-		if err != nil {
-			log.Fatal("Tigger erro 3", err.Error())
-			return err
-		}
+		return stream.Close()
+	} else {
+		return errors.New("Data not in redis")
 	}
-	return stream.Close()
-
-
-
-	//exists, err := h.CheckInRedis(req.RowId)
-	//if err != nil {
-	//	return err
-	//}
-	//if exists {
-	//	stringResultCmd := h.RedisConnection.SMembers(req.RowId)
-	//	resultStringArray := stringResultCmd.Val()
-	//	for i := 0 ; i < len(resultStringArray) ; i++ {
-	//		var resultMovie TileService.MovieTile
-	//		err := proto.Unmarshal([]byte(resultStringArray[i]), &resultMovie)
-	//		if err != nil {
-	//			return err
-	//		}
-	//		err = stream.Send(&resultMovie)
-	//		if err != nil {
-	//			return err
-	//		}
-	//	}
-	//	return stream.Close()
-	//} else {
-	//	return errors.New("Data not in redis")
-	//}
 }
 
 func(h *TileServiceHandler) GetRows( ctx context.Context, request *TileService.GetRowsRequest, stream TileService.TileService_GetRowsStream) error {
