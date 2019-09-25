@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package TileService;
+
+service TileService{
+    rpc GetMovieTiles(RowId) returns (stream MovieTile){}
+    rpc InitializingEngine(InitializingEngineRequest) returns (InitializingEngineResponse) {}
+    rpc GetRows(GetRowsRequest) returns (stream RowSpec) {}
+}
+
+message InitializingEngineRequest{
+    string keyword = 1;
+}
+
+message InitializingEngineResponse{
+    bool isDone = 1;
+}
+
+message RowId{
+    string rowId = 1;
+}
+
+message RowContent{
+    repeated MovieTile movieTiles = 1;
+}
+
+message GetRowsRequest{
+    string userId = 1;
+    string vendor = 2;
+    string brand = 3;
+}
+
+message GetRowsResponse{
+    repeated RowSpec rowSpec = 1;
+}
+
+message RowSpec{
+    string rowName = 1;
+    string rowId = 2;
+    string rowShape = 3;
+    int32 rowPosition = 4;
+}
+
+
+message MovieTile {
+    string ref_id = 1;
+    POSTERS posters = 2;
+    CONTENT content = 3;
+    METADATA metadata = 4;
+}
+
+message POSTERS {
+    repeated string landscape = 1;
+    repeated string portrait = 2;
+}
+
+message METADATA {
+    string title = 1;
+}
+
+message CONTENT {
+    bool detailPage = 1;
+    string package = 2;
+}
