@@ -36,10 +36,23 @@ func main(){
 	// Register Broker
 	publisher := micro.NewPublisher("refresh.Tiles", service.Client())
 
-	h := TileServiceHandler{MongoCollection:mongoClient.Database("test").Collection("cwmovies"),
+
+	handler := TileServiceHandler{MongoCollection:mongoClient.Database("test").Collection("cwmovies"),
 		RedisConnection:client,
 		EventPublisher: publisher}
-	err = TileService.RegisterTileServiceHandler(service.Server(), &h)
+	err = TileService.RegisterTileServiceHandler(service.Server(), &handler)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	subscriber := TileServiceSubscriber{
+		MongoCollection:mongoClient.Database("test").Collection("cwmovies"),
+		RedisConnection:client,
+	}
+
+	//Register Subscriber
+	//Subscribe
+	err = micro.RegisterSubscriber("applySchedule", service.Server(), &subscriber)
 	if err != nil {
 		log.Fatal(err)
 	}

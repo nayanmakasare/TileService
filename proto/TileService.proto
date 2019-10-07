@@ -18,6 +18,7 @@ message InitializingEngineResponse{
 
 message RowId{
     string rowId = 1;
+    bool getFullData = 2;
 }
 
 message RowContent{
@@ -61,4 +62,6 @@ message METADATA {
 message CONTENT {
     bool detailPage = 1;
     string package = 2;
+    repeated string target = 3;
+    string type = 4;
 }
