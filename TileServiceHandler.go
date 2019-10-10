@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"errors"
 	"github.com/go-redis/redis"
 	"github.com/golang/protobuf/proto"
-	"github.com/micro/go-micro"
 	"github.com/micro/go-micro/util/log"
 	TileService "github.com/nayanmakasare/TileService/proto"
 	"go.mongodb.org/mongo-driver/bson"
@@ -59,7 +57,6 @@ var defaultLanguages = []string{"English",
 type TileServiceHandler struct {
 	MongoCollection *mongo.Collection
 	RedisConnection *redis.Client
-	EventPublisher  micro.Publisher
 }
 
 func (h *TileServiceHandler) SegregatingTilesAccordingToValues(redisKey, contentKey string, contentValue string) {
@@ -67,13 +64,12 @@ func (h *TileServiceHandler) SegregatingTilesAccordingToValues(redisKey, content
 		//stage 1
 		bson.D{{"$match", bson.D{{contentKey, bson.D{{"$in", bson.A{contentValue}}}}}}},
 		//stage 2
-		bson.D{{"$sort", bson.D{{"created_at", -1}}}},
+		bson.D{{"$sort", bson.D{{"metadata.year", -1}}}},
 		//stage 4
 		bson.D{{"$project",
 			bson.D{{"_id", 0},
 				{"ref_id", 1}}}},
 	}
-
 	cur, err := h.MongoCollection.Aggregate(context.Background(), myStages, options.Aggregate().SetMaxTime(2000*time.Millisecond))
 	if err != nil {
 		log.Fatal(err)
@@ -98,14 +94,18 @@ func (h *TileServiceHandler) CheckInRedis(redisKey string) (bool, error) {
 
 func (h *TileServiceHandler) GetMovieTiles(ctx context.Context, req *TileService.RowId, stream TileService.TileService_GetMovieTilesStream) error {
 	var nextCursor uint64
-	log.Info("Get FullData ", req.GetFullData)
+	var chunkDataCount int64;
+	if req.GetFullData {
+		chunkDataCount = 300
+	} else {
+		chunkDataCount = 30;
+	}
 	for {
-		result, serverCursor, err := h.RedisConnection.SScan(req.RowId, nextCursor, "", 300).Result()
+		result, serverCursor, err := h.RedisConnection.SScan(req.RowId, nextCursor, "", chunkDataCount).Result()
 		if err != nil {
 			return err
 		}
 		nextCursor = serverCursor
-		counter := 0;
 		for _, k := range h.RedisConnection.HMGet("cloudwalkerTiles", result...).Val() {
 			var movieTile TileService.MovieTile
 			//Important lesson, challenge was to convert interface{} to byte. used  ([]byte(k.(string)))
@@ -113,14 +113,12 @@ func (h *TileServiceHandler) GetMovieTiles(ctx context.Context, req *TileService
 			if err != nil {
 				return err
 			}
-			counter++
 			err = stream.Send(&movieTile)
 			if err != nil {
 				return nil
 			}
 		}
-		log.Info(req.RowId," ",counter)
-		if serverCursor == 0 {
+		if serverCursor == 0 || !req.GetFullData {
 			break
 		}
 	}
@@ -132,31 +130,6 @@ func GetBytes(key interface{}) ([]byte) {
 	enc := gob.NewEncoder(&buf)
 	enc.Encode(key)
 	return buf.Bytes()
-}
-
-func (h *TileServiceHandler) GetRows(ctx context.Context, request *TileService.GetRowsRequest, stream TileService.TileService_GetRowsStream) error {
-	if len(request.UserId) > 0 {
-		return errors.New("Yet To implement")
-	} else {
-		for i, v := range defaultRows {
-			tempRowSpecs := &TileService.RowSpec{
-				RowName:     v,
-				RowId:       v,
-				RowShape:    "landscape",
-				RowPosition: int32(i),
-			}
-			err := stream.Send(tempRowSpecs)
-			if err != nil {
-				return err
-			}
-		}
-		log.Info(request.Brand, request.UserId, request.Vendor)
-		err := h.EventPublisher.Publish(ctx, request)
-		if err != nil {
-			return err
-		}
-		return stream.Close()
-	}
 }
 
 func (h *TileServiceHandler) InitializingEngine(ctx context.Context, req *TileService.InitializingEngineRequest, res *TileService.InitializingEngineResponse) error {

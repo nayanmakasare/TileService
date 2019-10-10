@@ -33,13 +33,11 @@ func main(){
 	}
 	client := GetRedisClient()
 
-	// Register Broker
-	publisher := micro.NewPublisher("refresh.Tiles", service.Client())
 
+	// Register notification Broker
+	notificationPublisher := micro.NewPublisher("notify", service.Client())
 
-	handler := TileServiceHandler{MongoCollection:mongoClient.Database("test").Collection("cwmovies"),
-		RedisConnection:client,
-		EventPublisher: publisher}
+	handler := TileServiceHandler{MongoCollection:mongoClient.Database("test").Collection("cwmovies"), RedisConnection:client}
 	err = TileService.RegisterTileServiceHandler(service.Server(), &handler)
 	if err != nil {
 		log.Fatal(err)
@@ -48,6 +46,7 @@ func main(){
 	subscriber := TileServiceSubscriber{
 		MongoCollection:mongoClient.Database("test").Collection("cwmovies"),
 		RedisConnection:client,
+		NotificationEventPublisher:notificationPublisher,
 	}
 
 	//Register Subscriber

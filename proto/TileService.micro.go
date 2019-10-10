@@ -36,7 +36,6 @@ var _ server.Option
 type TileService interface {
 	GetMovieTiles(ctx context.Context, in *RowId, opts ...client.CallOption) (TileService_GetMovieTilesService, error)
 	InitializingEngine(ctx context.Context, in *InitializingEngineRequest, opts ...client.CallOption) (*InitializingEngineResponse, error)
-	GetRows(ctx context.Context, in *GetRowsRequest, opts ...client.CallOption) (TileService_GetRowsService, error)
 }
 
 type tileService struct {
@@ -111,63 +110,17 @@ func (c *tileService) InitializingEngine(ctx context.Context, in *InitializingEn
 	return out, nil
 }
 
-func (c *tileService) GetRows(ctx context.Context, in *GetRowsRequest, opts ...client.CallOption) (TileService_GetRowsService, error) {
-	req := c.c.NewRequest(c.name, "TileService.GetRows", &GetRowsRequest{})
-	stream, err := c.c.Stream(ctx, req, opts...)
-	if err != nil {
-		return nil, err
-	}
-	if err := stream.Send(in); err != nil {
-		return nil, err
-	}
-	return &tileServiceGetRows{stream}, nil
-}
-
-type TileService_GetRowsService interface {
-	SendMsg(interface{}) error
-	RecvMsg(interface{}) error
-	Close() error
-	Recv() (*RowSpec, error)
-}
-
-type tileServiceGetRows struct {
-	stream client.Stream
-}
-
-func (x *tileServiceGetRows) Close() error {
-	return x.stream.Close()
-}
-
-func (x *tileServiceGetRows) SendMsg(m interface{}) error {
-	return x.stream.Send(m)
-}
-
-func (x *tileServiceGetRows) RecvMsg(m interface{}) error {
-	return x.stream.Recv(m)
-}
-
-func (x *tileServiceGetRows) Recv() (*RowSpec, error) {
-	m := new(RowSpec)
-	err := x.stream.Recv(m)
-	if err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
 // Server API for TileService service
 
 type TileServiceHandler interface {
 	GetMovieTiles(context.Context, *RowId, TileService_GetMovieTilesStream) error
 	InitializingEngine(context.Context, *InitializingEngineRequest, *InitializingEngineResponse) error
-	GetRows(context.Context, *GetRowsRequest, TileService_GetRowsStream) error
 }
 
 func RegisterTileServiceHandler(s server.Server, hdlr TileServiceHandler, opts ...server.HandlerOption) error {
 	type tileService interface {
 		GetMovieTiles(ctx context.Context, stream server.Stream) error
 		InitializingEngine(ctx context.Context, in *InitializingEngineRequest, out *InitializingEngineResponse) error
-		GetRows(ctx context.Context, stream server.Stream) error
 	}
 	type TileService struct {
 		tileService
@@ -217,39 +170,4 @@ func (x *tileServiceGetMovieTilesStream) Send(m *MovieTile) error {
 
 func (h *tileServiceHandler) InitializingEngine(ctx context.Context, in *InitializingEngineRequest, out *InitializingEngineResponse) error {
 	return h.TileServiceHandler.InitializingEngine(ctx, in, out)
-}
-
-func (h *tileServiceHandler) GetRows(ctx context.Context, stream server.Stream) error {
-	m := new(GetRowsRequest)
-	if err := stream.Recv(m); err != nil {
-		return err
-	}
-	return h.TileServiceHandler.GetRows(ctx, m, &tileServiceGetRowsStream{stream})
-}
-
-type TileService_GetRowsStream interface {
-	SendMsg(interface{}) error
-	RecvMsg(interface{}) error
-	Close() error
-	Send(*RowSpec) error
-}
-
-type tileServiceGetRowsStream struct {
-	stream server.Stream
-}
-
-func (x *tileServiceGetRowsStream) Close() error {
-	return x.stream.Close()
-}
-
-func (x *tileServiceGetRowsStream) SendMsg(m interface{}) error {
-	return x.stream.Send(m)
-}
-
-func (x *tileServiceGetRowsStream) RecvMsg(m interface{}) error {
-	return x.stream.Recv(m)
-}
-
-func (x *tileServiceGetRowsStream) Send(m *RowSpec) error {
-	return x.stream.Send(m)
 }
