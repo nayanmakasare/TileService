@@ -35,7 +35,6 @@ var _ server.Option
 
 type TileService interface {
 	GetMovieTiles(ctx context.Context, in *RowId, opts ...client.CallOption) (TileService_GetMovieTilesService, error)
-	InitializingEngine(ctx context.Context, in *InitializingEngineRequest, opts ...client.CallOption) (*InitializingEngineResponse, error)
 }
 
 type tileService struct {
@@ -100,27 +99,15 @@ func (x *tileServiceGetMovieTiles) Recv() (*MovieTile, error) {
 	return m, nil
 }
 
-func (c *tileService) InitializingEngine(ctx context.Context, in *InitializingEngineRequest, opts ...client.CallOption) (*InitializingEngineResponse, error) {
-	req := c.c.NewRequest(c.name, "TileService.InitializingEngine", in)
-	out := new(InitializingEngineResponse)
-	err := c.c.Call(ctx, req, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // Server API for TileService service
 
 type TileServiceHandler interface {
 	GetMovieTiles(context.Context, *RowId, TileService_GetMovieTilesStream) error
-	InitializingEngine(context.Context, *InitializingEngineRequest, *InitializingEngineResponse) error
 }
 
 func RegisterTileServiceHandler(s server.Server, hdlr TileServiceHandler, opts ...server.HandlerOption) error {
 	type tileService interface {
 		GetMovieTiles(ctx context.Context, stream server.Stream) error
-		InitializingEngine(ctx context.Context, in *InitializingEngineRequest, out *InitializingEngineResponse) error
 	}
 	type TileService struct {
 		tileService
@@ -166,8 +153,4 @@ func (x *tileServiceGetMovieTilesStream) RecvMsg(m interface{}) error {
 
 func (x *tileServiceGetMovieTilesStream) Send(m *MovieTile) error {
 	return x.stream.Send(m)
-}
-
-func (h *tileServiceHandler) InitializingEngine(ctx context.Context, in *InitializingEngineRequest, out *InitializingEngineResponse) error {
-	return h.TileServiceHandler.InitializingEngine(ctx, in, out)
 }

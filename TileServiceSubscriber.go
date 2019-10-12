@@ -31,7 +31,9 @@ type TileServiceSubscriber struct {
 
 
 func (h *TileServiceSubscriber) SubscriberChangeSchedule(ctx context.Context, schedule *SchedularService.CloudwalkerScheduler) error{
+	log.Info("SubscriberChangeSchedule 1")
 	for _,i := range schedule.Shedule {
+		log.Info(i.TimeZone," ", getTimeZone())
 		if i.TimeZone == getTimeZone() {
 			log.Info("Refreshing schedule for ", schedule.Vendor, schedule.Brand, i.TimeZone)
 			redisScheduleKey := MakeRedisKey(schedule.Vendor+":"+schedule.Brand+":"+i.TimeZone)
@@ -103,7 +105,8 @@ func (h *TileServiceSubscriber) SubscriberChangeSchedule(ctx context.Context, sc
 		RoutingKeyName:       schedule.Vendor+"."+schedule.Brand,
 		MessageTosend:        []byte("refreshSchedule"),
 	}
-	return h.NotificationEventPublisher.Publish(ctx,messageToPublish)
+	log.Info("Sub tile ")
+	return h.NotificationEventPublisher.Publish(ctx,&messageToPublish)
 }
 
 

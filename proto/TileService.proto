@@ -4,15 +4,6 @@ package TileService;
 
 service TileService{
     rpc GetMovieTiles(RowId) returns (stream MovieTile){}
-    rpc InitializingEngine(InitializingEngineRequest) returns (InitializingEngineResponse) {}
-}
-
-message InitializingEngineRequest{
-    string keyword = 1;
-}
-
-message InitializingEngineResponse{
-    bool isDone = 1;
 }
 
 message RowId{
@@ -45,5 +36,8 @@ message CONTENT {
     string package = 2;
     repeated string target = 3;
     string type = 4;
+    string playstoreUrl = 5;
+    bool useAlternate = 6;
+    string alternateUrl = 7;
 }
 

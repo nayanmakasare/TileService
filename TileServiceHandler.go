@@ -6,12 +6,8 @@ import (
 	"encoding/gob"
 	"github.com/go-redis/redis"
 	"github.com/golang/protobuf/proto"
-	"github.com/micro/go-micro/util/log"
 	TileService "github.com/nayanmakasare/TileService/proto"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"time"
+	"sync"
 )
 
 
@@ -55,33 +51,32 @@ var defaultLanguages = []string{"English",
 }
 
 type TileServiceHandler struct {
-	MongoCollection *mongo.Collection
 	RedisConnection *redis.Client
 }
 
-func (h *TileServiceHandler) SegregatingTilesAccordingToValues(redisKey, contentKey string, contentValue string) {
-	myStages := mongo.Pipeline{
-		//stage 1
-		bson.D{{"$match", bson.D{{contentKey, bson.D{{"$in", bson.A{contentValue}}}}}}},
-		//stage 2
-		bson.D{{"$sort", bson.D{{"metadata.year", -1}}}},
-		//stage 4
-		bson.D{{"$project",
-			bson.D{{"_id", 0},
-				{"ref_id", 1}}}},
-	}
-	cur, err := h.MongoCollection.Aggregate(context.Background(), myStages, options.Aggregate().SetMaxTime(2000*time.Millisecond))
-	if err != nil {
-		log.Fatal(err)
-	}
-	for cur.Next(context.Background()) {
-		h.RedisConnection.SAdd(redisKey, cur.Current.Lookup("ref_id").StringValue())
-	}
-	err = cur.Close(context.Background())
-	if err != nil {
-		log.Fatal(err)
-	}
-}
+//func (h *TileServiceHandler) SegregatingTilesAccordingToValues(redisKey, contentKey string, contentValue string) {
+//	myStages := mongo.Pipeline{
+//		//stage 1
+//		bson.D{{"$match", bson.D{{contentKey, bson.D{{"$in", bson.A{contentValue}}}}}}},
+//		//stage 2
+//		bson.D{{"$sort", bson.D{{"metadata.year", -1}}}},
+//		//stage 4
+//		bson.D{{"$project",
+//			bson.D{{"_id", 0},
+//				{"ref_id", 1}}}},
+//	}
+//	cur, err := h.MongoCollection.Aggregate(context.Background(), myStages, options.Aggregate().SetMaxTime(2000*time.Millisecond))
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	for cur.Next(context.Background()) {
+//		h.RedisConnection.SAdd(redisKey, cur.Current.Lookup("ref_id").StringValue())
+//	}
+//	err = cur.Close(context.Background())
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//}
 
 func (h *TileServiceHandler) CheckInRedis(redisKey string) (bool, error) {
 	intCmdResult := h.RedisConnection.Exists(redisKey)
@@ -100,29 +95,54 @@ func (h *TileServiceHandler) GetMovieTiles(ctx context.Context, req *TileService
 	} else {
 		chunkDataCount = 30;
 	}
+	var wg sync.WaitGroup
 	for {
 		result, serverCursor, err := h.RedisConnection.SScan(req.RowId, nextCursor, "", chunkDataCount).Result()
 		if err != nil {
 			return err
 		}
 		nextCursor = serverCursor
-		for _, k := range h.RedisConnection.HMGet("cloudwalkerTiles", result...).Val() {
-			var movieTile TileService.MovieTile
-			//Important lesson, challenge was to convert interface{} to byte. used  ([]byte(k.(string)))
-			err = proto.Unmarshal(([]byte(k.(string))), &movieTile)
-			if err != nil {
-				return err
+		tileChan := make(chan TileService.MovieTile, len(result))
+		wg.Add(2)
+		go func(ch <- chan TileService.MovieTile) error {
+			for{
+				if i , ok := <- ch; ok {
+					err := stream.Send(&i)
+					if err != nil {
+						return err
+					}
+				}else {
+					err := stream.Close()
+					if err != nil {
+						return err
+					}
+					break
+				}
 			}
-			err = stream.Send(&movieTile)
-			if err != nil {
-				return nil
+			wg.Done()
+			return nil
+		}(tileChan)
+
+		go func(h chan <- TileService.MovieTile, redisConn *redis.Client) error {
+			for _, k := range redisConn.HMGet("cloudwalkerTiles", result...).Val() {
+				var movieTile TileService.MovieTile
+				//Important lesson, challenge was to convert interface{} to byte. used  ([]byte(k.(string)))
+				err = proto.Unmarshal(([]byte(k.(string))), &movieTile)
+				if err != nil {
+					return err
+				}
+				h <- movieTile
 			}
-		}
+			close(tileChan)
+			wg.Done()
+			return nil
+		}(tileChan, h.RedisConnection)
+		wg.Wait()
 		if serverCursor == 0 || !req.GetFullData {
 			break
 		}
 	}
-	return stream.Close()
+	return nil
 }
 
 func GetBytes(key interface{}) ([]byte) {
@@ -132,61 +152,82 @@ func GetBytes(key interface{}) ([]byte) {
 	return buf.Bytes()
 }
 
-func (h *TileServiceHandler) InitializingEngine(ctx context.Context, req *TileService.InitializingEngineRequest, res *TileService.InitializingEngineResponse) error {
-	log.Info("Triggered init")
-	initProcessResult := make(chan bool, 1)
-	go h.StoringAllTilesToRedis(initProcessResult)
-	for _,k := range defaultLanguages {
-		go h.SegregatingTilesAccordingToValues(MakeRedisKey("cloudwalker:languages:"+k), "metadata.languages", k)
-	}
-	res.IsDone = <-initProcessResult
-	return nil
-}
-
-func (h *TileServiceHandler) StoringAllTilesToRedis(result chan bool) {
-	myStages := mongo.Pipeline{
-		bson.D{{"$project", bson.D{{"_id", 0}, {"ref_id", 1},
-			{"metadata.title", 1},
-			{"posters.landscape", 1},
-			{"posters.portrait", 1},
-			{"content.package", 1},
-			{"content.detailPage", 1},
-			{"content.target", 1},
-			{"content.type", 1}}}},
-	}
-	cur, err := h.MongoCollection.Aggregate(context.Background(), myStages)
-	if err != nil {
-		result <- false
-		log.Fatal(err)
-	}
-	for cur.Next(context.Background()) {
-		var movieTile TileService.MovieTile
-		err = cur.Decode(&movieTile)
-		movieTile.RefId = cur.Current.Lookup("ref_id").StringValue()
-		resultByteArray, err := proto.Marshal(&movieTile)
-		if err != nil {
-			log.Info("Tigger 4")
-			result <- false
-			log.Fatal(err)
-		}
-
-		/*TODO an important learning when i did "cur.Current.Lookup("ref_id").String()" it gave me values with "/" at front and end,
-			due to which i was unable to parse the string and get the value from redis so after a long reading I used ,
-		"cur.Current.Lookup("ref_id").StringValue()" which gave the proper string without "/" as needed.
-		*/
-		h.RedisConnection.HSet("cloudwalkerTiles", cur.Current.Lookup("ref_id").StringValue(), resultByteArray)
-	}
-	err = cur.Close(context.TODO())
-	if err != nil {
-		result <- false
-		log.Fatal(err)
-	}
-	result <- true
-}
+//func (h *TileServiceHandler) StoringAllTilesToRedis(result chan bool) {
+//	myStages := mongo.Pipeline{
+//		bson.D{{"$project", bson.D{{"_id", 0}, {"ref_id", 1},
+//			{"metadata.title", 1},
+//			{"posters.landscape", 1},
+//			{"posters.portrait", 1},
+//			{"content.package", 1},
+//			{"content.detailPage", 1},
+//			{"content.target", 1},
+//			{"content.type", 1},
+//			{"content.playstoreUrl", 1},
+//			{"content.useAlternate", 1},
+//			{"content.alternateUrl", 1}}}},
+//	}
+//	cur, err := h.MongoCollection.Aggregate(context.Background(), myStages)
+//	if err != nil {
+//		result <- false
+//		log.Fatal(err)
+//	}
+//	for cur.Next(context.Background()) {
+//		var movieTile TileService.MovieTile
+//		err = cur.Decode(&movieTile)
+//		movieTile.RefId = cur.Current.Lookup("ref_id").StringValue()
+//		resultByteArray, err := proto.Marshal(&movieTile)
+//		if err != nil {
+//			log.Info("Tigger 4")
+//			result <- false
+//			log.Fatal(err)
+//		}
+//
+//		/*TODO an important learning when i did "cur.Current.Lookup("ref_id").String()" it gave me values with "/" at front and end,
+//			due to which i was unable to parse the string and get the value from redis so after a long reading I used ,
+//		"cur.Current.Lookup("ref_id").StringValue()" which gave the proper string without "/" as needed.
+//		*/
+//		h.RedisConnection.HSet("cloudwalkerTiles", cur.Current.Lookup("ref_id").StringValue(), resultByteArray)
+//	}
+//	err = cur.Close(context.TODO())
+//	if err != nil {
+//		result <- false
+//		log.Fatal(err)
+//	}
+//	result <- true
+//}
 
 
 
-
+//var nextCursor uint64
+//var chunkDataCount int64;
+//if req.GetFullData {
+//chunkDataCount = 300
+//} else {
+//chunkDataCount = 30;
+//}
+//for {
+//result, serverCursor, err := h.RedisConnection.SScan(req.RowId, nextCursor, "", chunkDataCount).Result()
+//if err != nil {
+//return err
+//}
+//nextCursor = serverCursor
+//for _, k := range h.RedisConnection.HMGet("cloudwalkerTiles", result...).Val() {
+//var movieTile TileService.MovieTile
+////Important lesson, challenge was to convert interface{} to byte. used  ([]byte(k.(string)))
+//err = proto.Unmarshal(([]byte(k.(string))), &movieTile)
+//if err != nil {
+//return err
+//}
+//err = stream.Send(&movieTile)
+//if err != nil {
+//return nil
+//}
+//}
+//if serverCursor == 0 || !req.GetFullData {
+//break
+//}
+//}
+//return stream.Close()
 
 
 
